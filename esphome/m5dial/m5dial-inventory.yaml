@@ -1,0 +1,712 @@
+substitutions:
+  device_name: m5dial-inventory
+  friendly_name: "M5 Dial Inventory"
+
+esphome:
+  name: ${device_name}
+  friendly_name: ${friendly_name}
+
+  on_boot:
+    priority: -100
+    then:
+      - output.turn_on: power_hold
+      - light.turn_on:
+          id: backlight
+          brightness: 80%
+      - script.execute: show_page
+
+esp32:
+  board: esp32s3box
+  framework:
+    type: esp-idf
+
+logger:
+  level: INFO
+
+api:
+  encryption:
+    key: !secret api_encryption_key
+  actions:
+    - action: show_create_container
+      variables:
+        tag_id: string
+        incoming_item_ids: string[]
+        incoming_item_labels: string[]
+        incoming_item_formats: string[]
+        incoming_item_units: string[]
+        incoming_locations: string[]
+      then:
+        - lambda: |-
+            id(last_tag_id) = tag_id;
+            id(item_ids) = incoming_item_ids;
+            id(item_labels) = incoming_item_labels;
+            id(item_formats) = incoming_item_formats;
+            id(item_units) = incoming_item_units;
+            id(locations) = incoming_locations;
+            id(selected_item_index) = 0;
+            id(selected_location_index) = 0;
+            id(inventory_qty) = 0;
+            id(current_view) = 10;
+        - script.execute: sync_selection
+        - script.execute: show_page
+
+    - action: show_known_container
+      variables:
+        tag_id: string
+        item_label: string
+        item_format: string
+        quantity: int
+        unit: string
+        location: string
+        state: string
+        locations: string[]
+      then:
+        - lambda: |-
+            id(last_tag_id) = tag_id;
+            id(selected_item_label) = item_label;
+            id(selected_item_format) = item_format;
+            id(selected_item_unit) = unit;
+            id(selected_location_label) = location;
+            id(selected_state) = state;
+            id(locations) = locations;
+            id(selected_location_index) = 0;
+            for (int i = 0; i < (int) id(locations).size(); i++) {
+              if (id(locations)[i] == location) {
+                id(selected_location_index) = i;
+                break;
+              }
+            }
+            id(inventory_qty) = quantity;
+            id(current_view) = 20;
+        - script.execute: show_page
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  power_save_mode: LIGHT
+
+  ap:
+    ssid: "${friendly_name} Fallback"
+    password: !secret fallback_ap_password
+
+captive_portal:
+
+# ─────────────────────────────
+# HARDWARE
+# ─────────────────────────────
+
+spi:
+  clk_pin: GPIO6
+  mosi_pin: GPIO5
+
+i2c:
+  - id: bus_internal
+    sda: GPIO11
+    scl: GPIO12
+    scan: true
+    frequency: 100kHz
+
+display:
+  - platform: ili9xxx
+    model: GC9A01A
+    id: round_display
+    cs_pin: GPIO7
+    dc_pin: GPIO4
+    reset_pin: GPIO8
+    invert_colors: true
+    auto_clear_enabled: false
+    update_interval: never
+
+output:
+  - platform: gpio
+    id: power_hold
+    pin: GPIO46
+
+  - platform: ledc
+    id: buzzer_output
+    pin: GPIO3
+    frequency: 2000Hz
+
+  - platform: ledc
+    id: backlight_output
+    pin: GPIO9
+
+light:
+  - platform: monochromatic
+    id: backlight
+    output: backlight_output
+    restore_mode: ALWAYS_ON
+
+rtttl:
+  output: buzzer_output
+  id: buzzer
+
+# ─────────────────────────────
+# SENSORS
+# ─────────────────────────────
+
+binary_sensor:
+  - platform: status
+    id: ha_connected
+
+  - platform: gpio
+    id: dial_button
+    pin:
+      number: GPIO42
+      mode: INPUT_PULLUP
+      inverted: true
+    filters:
+      - delayed_on: 10ms
+
+    on_press:
+      then:
+        - script.execute: on_short_press
+
+    on_multi_click:
+      - timing:
+          - ON for at least 600ms
+        then:
+          - script.execute: on_long_press
+
+sensor:
+  - platform: wifi_signal
+    id: wifi_rssi
+    update_interval: 60s
+
+  - platform: rotary_encoder
+    id: dial_encoder
+    pin_a:
+      number: GPIO40
+      mode: INPUT_PULLUP
+    pin_b:
+      number: GPIO41
+      mode: INPUT_PULLUP
+    resolution: 2
+    filters:
+      - debounce: 2ms
+
+    on_clockwise:
+      then:
+        - script.execute: encoder_up
+
+    on_anticlockwise:
+      then:
+        - script.execute: encoder_down
+
+rc522_i2c:
+  id: nfc_reader
+  i2c_id: bus_internal
+  address: 0x28
+  update_interval: 1s
+
+  on_tag:
+    then:
+      - lambda: |-
+          id(last_tag_id) = x;
+      - script.execute: on_nfc
+
+# ─────────────────────────────
+# GLOBAL STATE
+# ─────────────────────────────
+
+globals:
+  - id: current_view
+    type: int
+    initial_value: "0"
+
+  - id: press_view
+    type: int
+    initial_value: "0"
+
+  - id: inventory_qty
+    type: int
+    initial_value: "0"
+
+  - id: last_tag_id
+    type: std::string
+    initial_value: '""'
+
+  - id: item_ids
+    type: std::vector<std::string>
+    initial_value: "{}"
+
+  - id: item_labels
+    type: std::vector<std::string>
+    initial_value: "{}"
+
+  - id: item_formats
+    type: std::vector<std::string>
+    initial_value: "{}"
+
+  - id: item_units
+    type: std::vector<std::string>
+    initial_value: "{}"
+
+  - id: locations
+    type: std::vector<std::string>
+    initial_value: "{}"
+
+  - id: selected_item_index
+    type: int
+    initial_value: "0"
+
+  - id: selected_location_index
+    type: int
+    initial_value: "0"
+
+  - id: selected_item_id
+    type: std::string
+    initial_value: '""'
+
+  - id: selected_item_label
+    type: std::string
+    initial_value: '""'
+
+  - id: selected_item_format
+    type: std::string
+    initial_value: '""'
+
+  - id: selected_item_unit
+    type: std::string
+    initial_value: '"items"'
+
+  - id: selected_location_label
+    type: std::string
+    initial_value: '""'
+
+  - id: selected_state
+    type: std::string
+    initial_value: '"unknown"'
+
+# ─────────────────────────────
+# SCRIPTS (NO INVALID IF SHORTCUTS)
+# ─────────────────────────────
+
+script:
+
+  - id: show_page
+    then:
+      - if:
+          condition:
+            lambda: 'return id(current_view) == 0;'
+          then:
+            - lvgl.page.show: page_idle
+
+      - if:
+          condition:
+            lambda: 'return id(current_view) == 1;'
+          then:
+            - lvgl.page.show: page_loading
+
+      - if:
+          condition:
+            lambda: 'return id(current_view) == 10;'
+          then:
+            - lvgl.page.show: page_create_item
+
+      - if:
+          condition:
+            lambda: 'return id(current_view) == 11;'
+          then:
+            - lvgl.page.show: page_create_qty
+
+      - if:
+          condition:
+            lambda: 'return id(current_view) == 13;'
+          then:
+            - lvgl.page.show: page_create_location
+
+      - if:
+          condition:
+            lambda: 'return id(current_view) == 20;'
+          then:
+            - lvgl.page.show: page_known
+
+      - if:
+          condition:
+            lambda: 'return id(current_view) == 21;'
+          then:
+            - lvgl.page.show: page_known_location
+
+      - if:
+          condition:
+            lambda: 'return id(current_view) == 30;'
+          then:
+            - lvgl.page.show: page_done
+      - script.execute: refresh_ui
+
+  - id: encoder_up
+    then:
+      - lambda: |-
+          if (id(current_view) == 10 && !id(item_labels).empty()) {
+            id(selected_item_index) = (id(selected_item_index) + 1) % id(item_labels).size();
+          } else if (id(current_view) == 11 || id(current_view) == 20) {
+            id(inventory_qty)++;
+          } else if ((id(current_view) == 13 || id(current_view) == 21) && !id(locations).empty()) {
+            id(selected_location_index) = (id(selected_location_index) + 1) % id(locations).size();
+          }
+      - script.execute: sync_selection
+      - script.execute: refresh_ui
+
+  - id: encoder_down
+    then:
+      - lambda: |-
+          if (id(current_view) == 10 && !id(item_labels).empty()) {
+            int size = id(item_labels).size();
+            id(selected_item_index) = (id(selected_item_index) + size - 1) % size;
+          } else if ((id(current_view) == 11 || id(current_view) == 20) && id(inventory_qty) > 0) {
+            id(inventory_qty)--;
+          } else if ((id(current_view) == 13 || id(current_view) == 21) && !id(locations).empty()) {
+            int size = id(locations).size();
+            id(selected_location_index) = (id(selected_location_index) + size - 1) % size;
+          }
+      - script.execute: sync_selection
+      - script.execute: refresh_ui
+
+  - id: on_short_press
+    then:
+      - lambda: 'id(press_view) = id(current_view);'
+      - if:
+          condition:
+            lambda: 'return id(press_view) == 10;'
+          then:
+            - lambda: 'id(current_view) = 11;'
+            - script.execute: show_page
+
+      - if:
+          condition:
+            lambda: 'return id(press_view) == 11;'
+          then:
+            - lambda: 'id(current_view) = 13;'
+            - script.execute: show_page
+
+      - if:
+          condition:
+            lambda: 'return id(press_view) == 13 && !id(last_tag_id).empty();'
+          then:
+            - homeassistant.event:
+                event: esphome.restock_create_container
+                data:
+                  tag_id: !lambda 'return id(last_tag_id);'
+                  item_id: !lambda 'return id(selected_item_id);'
+                  item_label: !lambda 'return id(selected_item_label);'
+                  item_format: !lambda 'return id(selected_item_format);'
+                  unit: !lambda 'return id(selected_item_unit);'
+                  quantity: !lambda 'return std::to_string(id(inventory_qty));'
+                  location: !lambda 'return id(selected_location_label);'
+                  state: "unknown"
+            - lambda: |-
+                id(current_view) = 30;
+            - script.execute: show_page
+
+      - if:
+          condition:
+            lambda: 'return id(press_view) == 20 && !id(last_tag_id).empty();'
+          then:
+            - lambda: 'id(current_view) = 21;'
+            - script.execute: show_page
+
+      - if:
+          condition:
+            lambda: 'return id(press_view) == 21 && !id(last_tag_id).empty();'
+          then:
+            - homeassistant.event:
+                event: esphome.restock_update_container
+                data:
+                  tag_id: !lambda 'return id(last_tag_id);'
+                  quantity: !lambda 'return std::to_string(id(inventory_qty));'
+                  location: !lambda 'return id(selected_location_label);'
+            - lambda: |-
+                id(current_view) = 30;
+            - script.execute: show_page
+
+      - if:
+          condition:
+            lambda: 'return id(press_view) == 30;'
+          then:
+            - lambda: 'id(current_view) = 0;'
+            - script.execute: show_page
+
+  - id: on_long_press
+    then:
+      - lambda: |-
+          id(current_view) = 0;
+      - script.execute: show_page
+
+  - id: on_nfc
+    then:
+      - rtttl.play: "beep:d=4,o=5,b=180:16e6"
+      - lambda: |-
+          id(current_view) = 1;
+          id(inventory_qty) = 0;
+      - script.execute: show_page
+      - homeassistant.event:
+          event: esphome.restock_scan
+          data:
+            tag_id: !lambda 'return id(last_tag_id);'
+
+  - id: sync_selection
+    then:
+      - lambda: |-
+          if (!id(item_labels).empty()) {
+            if (id(selected_item_index) < 0) id(selected_item_index) = 0;
+            if (id(selected_item_index) >= (int) id(item_labels).size()) id(selected_item_index) = id(item_labels).size() - 1;
+            id(selected_item_label) = id(item_labels)[id(selected_item_index)];
+          }
+          if (!id(item_ids).empty() && id(selected_item_index) < (int) id(item_ids).size()) {
+            id(selected_item_id) = id(item_ids)[id(selected_item_index)];
+          }
+          if (!id(item_formats).empty() && id(selected_item_index) < (int) id(item_formats).size()) {
+            id(selected_item_format) = id(item_formats)[id(selected_item_index)];
+          }
+          if (!id(item_units).empty() && id(selected_item_index) < (int) id(item_units).size()) {
+            id(selected_item_unit) = id(item_units)[id(selected_item_index)];
+          }
+          if (!id(locations).empty()) {
+            if (id(selected_location_index) < 0) id(selected_location_index) = 0;
+            if (id(selected_location_index) >= (int) id(locations).size()) id(selected_location_index) = id(locations).size() - 1;
+            id(selected_location_label) = id(locations)[id(selected_location_index)];
+          }
+
+  - id: refresh_ui
+    then:
+      - lvgl.label.update:
+          id: lbl_item_name
+          text: !lambda 'return id(selected_item_label);'
+      - lvgl.label.update:
+          id: lbl_item_format
+          text: !lambda 'return id(selected_item_format);'
+      - lvgl.label.update:
+          id: lbl_item_count
+          text: !lambda 'return std::to_string(id(inventory_qty)) + " " + id(selected_item_unit);'
+      - lvgl.label.update:
+          id: lbl_qty_value
+          text: !lambda 'return std::to_string(id(inventory_qty));'
+      - lvgl.label.update:
+          id: lbl_qty_unit
+          text: !lambda 'return id(selected_item_unit);'
+      - lvgl.label.update:
+          id: lbl_location_name
+          text: !lambda 'return id(selected_location_label);'
+      - lvgl.label.update:
+          id: lbl_known_name
+          text: !lambda 'return id(selected_item_label);'
+      - lvgl.label.update:
+          id: lbl_known_format
+          text: !lambda 'return id(selected_item_format);'
+      - lvgl.label.update:
+          id: lbl_known_qty
+          text: !lambda 'return std::to_string(id(inventory_qty)) + " " + id(selected_item_unit);'
+      - lvgl.label.update:
+          id: lbl_known_location
+          text: !lambda 'return id(selected_location_label);'
+      - lvgl.label.update:
+          id: lbl_known_location_select
+          text: !lambda 'return id(selected_location_label);'
+
+# ─────────────────────────────
+# LVGL (LEFT EMPTY ON PURPOSE FOR STABILITY)
+# ─────────────────────────────
+lvgl:
+  displays:
+    - round_display
+  bg_color: 0x0B0B0F
+
+  pages:
+
+    - id: page_idle
+      bg_color: 0x0B0B0F
+      widgets:
+        - label:
+            align: CENTER
+            y: -28
+            text: "RESTOCK"
+            text_color: 0xFFFFFF
+        - label:
+            align: CENTER
+            y: 8
+            text: "Scan a tag"
+            text_color: 0x8E8E93
+        - label:
+            align: CENTER
+            y: 42
+            text: "Hold to cancel"
+            text_color: 0x3A3A3C
+
+    - id: page_loading
+      bg_color: 0x0B0B0F
+      widgets:
+        - label:
+            align: CENTER
+            y: -14
+            text: "Reading tag"
+            text_color: 0xFFFFFF
+        - label:
+            align: CENTER
+            y: 22
+            text: "One moment..."
+            text_color: 0x8E8E93
+
+    - id: page_create_item
+      bg_color: 0x0B0B0F
+      widgets:
+        - label:
+            align: TOP_MID
+            y: 22
+            text: "New container"
+            text_color: 0x8E8E93
+        - label:
+            id: lbl_item_name
+            align: CENTER
+            y: -28
+            text: ""
+            text_color: 0xFFFFFF
+        - label:
+            id: lbl_item_count
+            align: CENTER
+            y: 8
+            text: "0 items"
+            text_color: 0x34C759
+        - label:
+            id: lbl_item_format
+            align: CENTER
+            y: 40
+            text: ""
+            text_color: 0x8E8E93
+        - label:
+            align: BOTTOM_MID
+            y: -24
+            text: "Turn item  Press next"
+            text_color: 0x3A3A3C
+
+    - id: page_create_qty
+      bg_color: 0x0B0B0F
+      widgets:
+        - label:
+            align: TOP_MID
+            y: 22
+            text: "Inventory count"
+            text_color: 0x8E8E93
+        - label:
+            id: lbl_qty_value
+            align: CENTER
+            y: -18
+            text: "0"
+            text_color: 0xFFFFFF
+        - label:
+            id: lbl_qty_unit
+            align: CENTER
+            y: 34
+            text: "items"
+            text_color: 0x34C759
+        - label:
+            align: BOTTOM_MID
+            y: -24
+            text: "Turn count  Press next"
+            text_color: 0x3A3A3C
+
+    - id: page_create_location
+      bg_color: 0x0B0B0F
+      widgets:
+        - label:
+            align: TOP_MID
+            y: 22
+            text: "Location"
+            text_color: 0x8E8E93
+        - label:
+            id: lbl_location_name
+            align: CENTER
+            y: -12
+            text: ""
+            text_color: 0xFFFFFF
+        - label:
+            align: CENTER
+            y: 32
+            text: "Press to create"
+            text_color: 0x34C759
+        - label:
+            align: BOTTOM_MID
+            y: -24
+            text: "Turn location"
+            text_color: 0x3A3A3C
+
+    - id: page_known
+      bg_color: 0x0B0B0F
+      widgets:
+        - label:
+            align: TOP_MID
+            y: 20
+            text: "Current inventory"
+            text_color: 0x8E8E93
+        - label:
+            id: lbl_known_name
+            align: CENTER
+            y: -44
+            text: ""
+            text_color: 0xFFFFFF
+        - label:
+            id: lbl_known_format
+            align: CENTER
+            y: -12
+            text: ""
+            text_color: 0x8E8E93
+        - label:
+            id: lbl_known_qty
+            align: CENTER
+            y: 26
+            text: "0 items"
+            text_color: 0x34C759
+        - label:
+            id: lbl_known_location
+            align: CENTER
+            y: 58
+            text: ""
+            text_color: 0x8E8E93
+        - label:
+            align: BOTTOM_MID
+            y: -18
+            text: "Turn count  Press next"
+            text_color: 0x3A3A3C
+
+    - id: page_known_location
+      bg_color: 0x0B0B0F
+      widgets:
+        - label:
+            align: TOP_MID
+            y: 22
+            text: "Move container"
+            text_color: 0x8E8E93
+        - label:
+            id: lbl_known_location_select
+            align: CENTER
+            y: -12
+            text: ""
+            text_color: 0xFFFFFF
+        - label:
+            align: CENTER
+            y: 32
+            text: "Press to save"
+            text_color: 0x34C759
+        - label:
+            align: BOTTOM_MID
+            y: -24
+            text: "Turn location"
+            text_color: 0x3A3A3C
+
+    - id: page_done
+      bg_color: 0x0B0B0F
+      widgets:
+        - label:
+            align: CENTER
+            y: -10
+            text: "Saved"
+            text_color: 0x34C759
+        - label:
+            align: CENTER
+            y: 28
+            text: "Press to scan"
+            text_color: 0x8E8E93

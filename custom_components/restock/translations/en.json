@@ -1,0 +1,45 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Set up RESTOCK",
+        "description": "Create the inventory integration and seed your first locations.",
+        "data": {
+          "initial_locations": "Initial locations",
+          "m5dial_service_prefix": "M5Dial ESPHome action prefix"
+        }
+      }
+    },
+    "abort": {
+      "single_instance_allowed": "RESTOCK is already configured."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "RESTOCK options",
+        "description": "Locations listed here will be created if they do not already exist.",
+        "data": {
+          "initial_locations": "Locations",
+          "m5dial_service_prefix": "M5Dial ESPHome action prefix"
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "container_quantity": {
+        "name": "Quantity"
+      },
+      "container_location": {
+        "name": "Location"
+      },
+      "container_state": {
+        "name": "State"
+      },
+      "location": {
+        "name": "Containers"
+      }
+    }
+  }
+}
