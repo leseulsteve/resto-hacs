@@ -13,6 +13,12 @@ learning, and iteration, not for critical inventory tracking.
 Copy `custom_components/restock` into your Home Assistant config directory and
 restart Home Assistant. Then add RESTOCK from **Settings > Devices & services**.
 
+## Updates
+
+When RESTOCK is installed through HACS, updates are delivered through GitHub
+releases. HACS exposes available updates in Home Assistant through its update
+entity and the Settings update UI.
+
 ## Entities
 
 RESTOCK creates:

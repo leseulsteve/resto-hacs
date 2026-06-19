@@ -26,6 +26,31 @@ must stay private, use the manual development install below instead.
 6. Restart Home Assistant.
 7. Add RESTOCK from **Settings > Devices & services**.
 
+## Versioning And Updates
+
+RESTOCK uses semantic versions in
+`custom_components/restock/manifest.json`. HACS reads GitHub releases and will
+surface new versions in Home Assistant as an update entity and in the Settings
+update UI when this integration is installed through HACS.
+
+To publish a new version:
+
+```bash
+python3 scripts/bump_version.py 0.1.1
+git add custom_components/restock/manifest.json CHANGELOG.md
+git commit -m "Release 0.1.1"
+git tag v0.1.1
+git push origin main --tags
+```
+
+The GitHub release workflow checks that the tag, such as `v0.1.1`, matches the
+manifest version, such as `0.1.1`, before creating a release.
+
+In Home Assistant, make sure HACS update entities are enabled. Once HACS sees a
+new GitHub release, Home Assistant can show RESTOCK as an available update. For
+extra reminders, create an automation from the RESTOCK/HACS update entity that
+sends a persistent notification when its state changes to `on`.
+
 ## M5Dial
 
 The ESPHome configuration lives in `esphome/m5dial/m5dial-inventory.yaml`.
