@@ -3,6 +3,11 @@
 RESTOCK is a Home Assistant custom integration for tracking physical inventory
 containers by NFC/RFID tag.
 
+## Status
+
+RESTOCK is a personal experiment and is provided as-is. Use it for testing,
+learning, and iteration, not for critical inventory tracking.
+
 ## Install
 
 Copy `custom_components/restock` into your Home Assistant config directory and

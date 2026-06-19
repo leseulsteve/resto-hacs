@@ -3,6 +3,12 @@
 RESTOCK is a Home Assistant custom integration for tracking physical inventory
 containers with NFC/RFID tags and an ESPHome M5Dial scanner.
 
+## Status
+
+RESTOCK is a personal experiment and is shared as-is. It is not a polished or
+official Home Assistant integration, and it should be used for testing and
+learning rather than relied on for critical inventory tracking.
+
 ## Personal HACS Installation
 
 HACS can install RESTOCK as a custom repository for your own Home Assistant
