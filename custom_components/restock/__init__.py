@@ -327,10 +327,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             "show_create_container",
             {
                 "tag_id": tag_id,
-                "item_ids": [item["id"] for item in payload["items"]],
-                "item_labels": [item["label"] for item in payload["items"]],
-                "item_formats": [item["format"] for item in payload["items"]],
-                "item_units": [item["unit"] for item in payload["items"]],
+                "incoming_item_ids": [item["id"] for item in payload["items"]],
+                "incoming_item_labels": [item["label"] for item in payload["items"]],
+                "incoming_item_formats": [item["format"] for item in payload["items"]],
+                "incoming_item_units": [item["unit"] for item in payload["items"]],
                 "incoming_locations": payload["locations"],
             },
         )
