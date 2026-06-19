@@ -32,6 +32,7 @@ from .const import (
     SERVICE_SCAN_CONTAINER,
     SERVICE_UPDATE_CONTAINER,
 )
+from .panel import async_register_panel, async_unregister_panel
 from .store import RestockInventory
 
 _LOGGER = logging.getLogger(__name__)
@@ -82,11 +83,19 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
 
     async def handle_create_location(call: ServiceCall) -> None:
         manager = _manager(hass)
+        _LOGGER.info("Creating RESTOCK location: %s", call.data[ATTR_NAME])
         await manager.async_create_location(call.data[ATTR_NAME])
 
     async def handle_create_container(call: ServiceCall) -> None:
         manager = _manager(hass)
         item = _mock_item(call.data.get(ATTR_ITEM_ID))
+        _LOGGER.info(
+            "Creating RESTOCK container from service: tag_id=%s item_id=%s quantity=%s location=%s",
+            call.data[ATTR_TAG_ID],
+            call.data.get(ATTR_ITEM_ID),
+            call.data.get(ATTR_QUANTITY, 0),
+            call.data.get(ATTR_LOCATION),
+        )
         await manager.async_create_container(
             tag_id=call.data[ATTR_TAG_ID],
             name=call.data.get(ATTR_NAME),
@@ -101,6 +110,14 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
 
     async def handle_update_container(call: ServiceCall) -> None:
         manager = _manager(hass)
+        _LOGGER.info(
+            "Updating RESTOCK container from service: tag_id=%s quantity=%s delta=%s location=%s state=%s",
+            call.data[ATTR_TAG_ID],
+            call.data.get(ATTR_QUANTITY),
+            call.data.get(ATTR_DELTA),
+            call.data.get(ATTR_LOCATION),
+            call.data.get(ATTR_STATE),
+        )
         try:
             await manager.async_update_container(
                 tag_id=call.data[ATTR_TAG_ID],
@@ -121,6 +138,11 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
 
     async def handle_fill_container(call: ServiceCall) -> None:
         manager = _manager(hass)
+        _LOGGER.info(
+            "Filling RESTOCK container: tag_id=%s quantity=%s",
+            call.data[ATTR_TAG_ID],
+            call.data[ATTR_QUANTITY],
+        )
         try:
             await manager.async_update_container(
                 tag_id=call.data[ATTR_TAG_ID],
@@ -133,6 +155,11 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
 
     async def handle_remove_items(call: ServiceCall) -> None:
         manager = _manager(hass)
+        _LOGGER.info(
+            "Removing RESTOCK items: tag_id=%s quantity=%s",
+            call.data[ATTR_TAG_ID],
+            call.data[ATTR_QUANTITY],
+        )
         try:
             await manager.async_update_container(
                 tag_id=call.data[ATTR_TAG_ID],
@@ -145,6 +172,12 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
 
     async def handle_scan_container(call: ServiceCall) -> None:
         manager = _manager(hass)
+        _LOGGER.info(
+            "Applying RESTOCK scan service: tag_id=%s quantity=%s mode=%s",
+            call.data[ATTR_TAG_ID],
+            call.data.get(ATTR_QUANTITY),
+            call.data.get(ATTR_MODE, "set"),
+        )
         await manager.async_scan_container(
             tag_id=call.data[ATTR_TAG_ID],
             quantity=call.data.get(ATTR_QUANTITY),
@@ -153,6 +186,7 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
 
     async def handle_mock_api(call: ServiceCall) -> None:
         manager = _manager(hass)
+        _LOGGER.debug("Firing RESTOCK mock API response event")
         hass.bus.async_fire("restock.mock_api_response", manager.mock_api_payload())
 
     hass.services.async_register(
@@ -238,6 +272,7 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         handle_mock_api,
         schema=vol.Schema({}),
     )
+    _LOGGER.debug("Registered RESTOCK services")
     return True
 
 
@@ -249,6 +284,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = manager
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
+    async_register_panel(hass)
+    _LOGGER.info(
+        "RESTOCK entry loaded: entry_id=%s containers=%d locations=%d",
+        entry.entry_id,
+        len(manager.containers),
+        len(manager.locations),
+    )
 
     async def call_m5dial(action: str, data: dict) -> None:
         """Call a user-defined ESPHome action on the M5Dial."""
@@ -257,6 +299,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             entry.data.get(CONF_M5DIAL_SERVICE_PREFIX, DEFAULT_M5DIAL_SERVICE_PREFIX),
         )
         service = f"{service_prefix}_{action}"
+        _LOGGER.debug(
+            "Calling ESPHome action esphome.%s with keys=%s",
+            service,
+            sorted(data),
+        )
         try:
             await hass.services.async_call(
                 "esphome",
@@ -270,6 +317,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     async def show_create_flow(tag_id: str) -> None:
         """Tell the M5Dial to show the create-container flow."""
         payload = manager.mock_api_payload()
+        _LOGGER.info(
+            "Showing RESTOCK create flow on M5Dial: tag_id=%s items=%d locations=%d",
+            tag_id,
+            len(payload["items"]),
+            len(payload["locations"]),
+        )
         await call_m5dial(
             "show_create_container",
             {
@@ -278,13 +331,19 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 "item_labels": [item["label"] for item in payload["items"]],
                 "item_formats": [item["format"] for item in payload["items"]],
                 "item_units": [item["unit"] for item in payload["items"]],
-                "locations": payload["locations"],
+                "incoming_locations": payload["locations"],
             },
         )
 
     async def show_known_flow(tag_id: str, container: dict) -> None:
         """Tell the M5Dial to show the known-container flow."""
         payload = manager.mock_api_payload()
+        _LOGGER.info(
+            "Showing RESTOCK known flow on M5Dial: tag_id=%s quantity=%s location=%s",
+            tag_id,
+            container.get("quantity"),
+            container.get("location"),
+        )
         await call_m5dial(
             "show_known_container",
             {
@@ -297,7 +356,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 "unit": container.get("unit") or DEFAULT_UNIT,
                 "location": container.get("location") or "unknown",
                 "state": container.get("state") or "unknown",
-                "locations": payload["locations"],
+                "incoming_locations": payload["locations"],
             },
         )
 
@@ -306,11 +365,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         """Handle a raw NFC scan from the M5Dial."""
         tag_id = event.data.get(ATTR_TAG_ID)
         if not tag_id:
+            _LOGGER.debug("Ignoring RESTOCK scan event without tag_id")
             return
         container = manager.get_container(tag_id)
         if container:
+            _LOGGER.info("Known RESTOCK NFC tag scanned: tag_id=%s", tag_id)
             hass.async_create_task(show_known_flow(tag_id, container))
         else:
+            _LOGGER.info("Unknown RESTOCK NFC tag scanned: tag_id=%s", tag_id)
             hass.async_create_task(show_create_flow(tag_id))
 
     @callback
@@ -318,13 +380,26 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         """Create a container from the M5Dial flow."""
         tag_id = event.data.get(ATTR_TAG_ID)
         if not tag_id:
+            _LOGGER.debug("Ignoring RESTOCK create event without tag_id")
             return
         item = _mock_item(event.data.get(ATTR_ITEM_ID))
         quantity = event.data.get(ATTR_QUANTITY, 0)
         try:
             quantity = int(quantity)
         except (TypeError, ValueError):
+            _LOGGER.debug(
+                "Invalid RESTOCK create quantity from M5Dial: tag_id=%s quantity=%s",
+                tag_id,
+                event.data.get(ATTR_QUANTITY),
+            )
             quantity = 0
+        _LOGGER.info(
+            "Creating RESTOCK container from M5Dial: tag_id=%s item_id=%s quantity=%d location=%s",
+            tag_id,
+            event.data.get(ATTR_ITEM_ID),
+            quantity,
+            event.data.get(ATTR_LOCATION),
+        )
         hass.async_create_task(
             manager.async_create_container(
                 tag_id=tag_id,
@@ -344,12 +419,24 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         """Update a container from the M5Dial flow."""
         tag_id = event.data.get(ATTR_TAG_ID)
         if not tag_id:
+            _LOGGER.debug("Ignoring RESTOCK update event without tag_id")
             return
         quantity = event.data.get(ATTR_QUANTITY)
         try:
             quantity = int(quantity)
         except (TypeError, ValueError):
+            _LOGGER.debug(
+                "Ignoring RESTOCK update with invalid quantity: tag_id=%s quantity=%s",
+                tag_id,
+                quantity,
+            )
             return
+        _LOGGER.info(
+            "Updating RESTOCK container from M5Dial: tag_id=%s quantity=%d location=%s",
+            tag_id,
+            quantity,
+            event.data.get(ATTR_LOCATION),
+        )
         hass.async_create_task(
             manager.async_update_container(
                 tag_id=tag_id,
@@ -364,14 +451,26 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         """Handle scanner events from ESPHome/M5Dial."""
         tag_id = event.data.get(ATTR_TAG_ID)
         if not tag_id:
+            _LOGGER.debug("Ignoring RESTOCK inventory confirm event without tag_id")
             return
         quantity = event.data.get(ATTR_QUANTITY)
         if quantity is not None:
             try:
                 quantity = int(quantity)
             except (TypeError, ValueError):
+                _LOGGER.debug(
+                    "Ignoring RESTOCK inventory confirm with invalid quantity: tag_id=%s quantity=%s",
+                    tag_id,
+                    quantity,
+                )
                 return
         mode = event.data.get(ATTR_MODE, "set")
+        _LOGGER.info(
+            "Applying RESTOCK inventory confirm event: tag_id=%s quantity=%s mode=%s",
+            tag_id,
+            quantity,
+            mode,
+        )
         hass.async_create_task(
             manager.async_scan_container(tag_id=tag_id, quantity=quantity, mode=mode)
         )
@@ -386,11 +485,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     entry.async_on_unload(
         hass.bus.async_listen(EVENT_RESTOCK_UPDATE_CONTAINER, handle_update_from_dial)
     )
+    _LOGGER.debug("Registered RESTOCK event listeners")
     return True
 
 
 async def _async_update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Reload RESTOCK when options change."""
+    _LOGGER.info("Reloading RESTOCK entry after options update: %s", entry.entry_id)
     await hass.config_entries.async_reload(entry.entry_id)
 
 
@@ -401,4 +502,6 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hass.data[DOMAIN].pop(entry.entry_id)
         if not hass.data[DOMAIN]:
             hass.data.pop(DOMAIN)
+            async_unregister_panel(hass)
+        _LOGGER.info("RESTOCK entry unloaded: entry_id=%s", entry.entry_id)
     return unload_ok

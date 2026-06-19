@@ -6,6 +6,7 @@ DOMAIN = "restock"
 NAME = "RESTOCK"
 
 PLATFORMS = ["sensor"]
+PANEL_URL_PATH = "restock"
 
 CONF_INITIAL_LOCATIONS = "initial_locations"
 CONF_M5DIAL_SERVICE_PREFIX = "m5dial_service_prefix"

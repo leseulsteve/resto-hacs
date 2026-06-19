@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
@@ -22,6 +24,8 @@ from .const import (
     SIGNAL_RESTOCK_ENTITY_ADDED,
     STORAGE_VERSION,
 )
+
+_LOGGER = logging.getLogger(__name__)
 
 
 def _utc_now() -> str:
@@ -47,6 +51,13 @@ class RestockInventory:
         stored = await self._store.async_load()
         if stored:
             self.data = stored
+            _LOGGER.debug(
+                "Loaded RESTOCK storage: containers=%d locations=%d",
+                len(self.containers),
+                len(self.locations),
+            )
+        else:
+            _LOGGER.debug("No RESTOCK storage found, starting with empty inventory")
 
         configured_locations = self.entry.options.get(
             CONF_INITIAL_LOCATIONS,
@@ -57,6 +68,10 @@ class RestockInventory:
             self.ensure_location(location, save=False)
 
         if set(self.locations) != known_locations:
+            _LOGGER.debug(
+                "Saving RESTOCK storage after seeding configured locations: locations=%d",
+                len(self.locations),
+            )
             await self.async_save(notify=False)
 
     @property
@@ -74,6 +89,11 @@ class RestockInventory:
         configured_locations = [
             location["name"] for location in self.locations.values()
         ] or MOCK_LOCATIONS
+        _LOGGER.debug(
+            "Built RESTOCK mock API payload: items=%d locations=%d",
+            len(MOCK_ITEMS),
+            len(configured_locations),
+        )
         return {"items": MOCK_ITEMS, "locations": configured_locations}
 
     def get_container(self, tag_id: str) -> dict[str, Any] | None:
@@ -104,6 +124,7 @@ class RestockInventory:
             return self.locations[key]["name"]
 
         self.locations[key] = {"name": name, "created_at": _utc_now()}
+        _LOGGER.info("Created RESTOCK location: name=%s", name)
         async_dispatcher_send(self.hass, SIGNAL_RESTOCK_ENTITY_ADDED, "location", key)
         if save:
             self.hass.async_create_task(self.async_save())
@@ -154,6 +175,15 @@ class RestockInventory:
             async_dispatcher_send(
                 self.hass, SIGNAL_RESTOCK_ENTITY_ADDED, "container", tag_id
             )
+        _LOGGER.info(
+            "%s RESTOCK container: tag_id=%s name=%s quantity=%s location=%s state=%s",
+            "Created" if is_new else "Replaced",
+            tag_id,
+            self.containers[tag_id].get("name"),
+            self.containers[tag_id].get("quantity"),
+            self.containers[tag_id].get("location"),
+            self.containers[tag_id].get("state"),
+        )
         await self.async_save()
 
     async def async_update_container(
@@ -175,10 +205,19 @@ class RestockInventory:
         tag_id = self._normalize_tag_id(tag_id)
         if tag_id not in self.containers:
             if not create_missing:
+                _LOGGER.debug(
+                    "RESTOCK update rejected for unknown container: tag_id=%s",
+                    tag_id,
+                )
                 raise KeyError(tag_id)
+            _LOGGER.info(
+                "Creating missing RESTOCK container during update: tag_id=%s",
+                tag_id,
+            )
             await self.async_create_container(tag_id=tag_id)
 
         container = self.containers[tag_id]
+        before = dict(container)
         if quantity is not None:
             container["quantity"] = max(0, int(quantity))
         if delta is not None:
@@ -202,6 +241,16 @@ class RestockInventory:
         if item_format is not None:
             container["item_format"] = item_format
         container["updated_at"] = _utc_now()
+        _LOGGER.info(
+            "Updated RESTOCK container: tag_id=%s quantity=%s->%s location=%s->%s state=%s->%s",
+            tag_id,
+            before.get("quantity"),
+            container.get("quantity"),
+            before.get("location"),
+            container.get("location"),
+            before.get("state"),
+            container.get("state"),
+        )
         await self.async_save()
 
     async def async_scan_container(
@@ -223,6 +272,14 @@ class RestockInventory:
             else:
                 set_quantity = int(quantity)
 
+        _LOGGER.debug(
+            "Applying RESTOCK scan: tag_id=%s quantity=%s mode=%s set_quantity=%s delta=%s",
+            tag_id,
+            quantity,
+            mode,
+            set_quantity,
+            delta,
+        )
         await self.async_update_container(
             tag_id=tag_id,
             quantity=set_quantity,
@@ -233,6 +290,12 @@ class RestockInventory:
     async def async_save(self, *, notify: bool = True) -> None:
         """Save inventory data and notify entities."""
         await self._store.async_save(self.data)
+        _LOGGER.debug(
+            "Saved RESTOCK storage: containers=%d locations=%d notify=%s",
+            len(self.containers),
+            len(self.locations),
+            notify,
+        )
         if notify:
             for listener in list(self._listeners):
                 listener()
