@@ -5,7 +5,8 @@
   "config_flow": true,
   "documentation": "https://github.com/leseulsteve/resto-hacs",
   "dependencies": [
-    "frontend"
+    "frontend",
+    "websocket_api"
   ],
   "issue_tracker": "https://github.com/leseulsteve/resto-hacs/issues",
   "integration_type": "hub",

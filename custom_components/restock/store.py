@@ -43,7 +43,7 @@ class RestockInventory:
         self._store: Store[dict[str, Any]] = Store(
             hass, STORAGE_VERSION, f"{DOMAIN}.{entry.entry_id}"
         )
-        self.data: dict[str, Any] = {"containers": {}, "locations": {}}
+        self.data: dict[str, Any] = {"containers": {}, "locations": {}, "logbook": []}
         self._listeners: list[Callable[[], None]] = []
 
     async def async_load(self) -> None:
@@ -83,6 +83,11 @@ class RestockInventory:
     def locations(self) -> dict[str, dict[str, Any]]:
         """Return all locations."""
         return self.data.setdefault("locations", {})
+
+    @property
+    def logbook(self) -> list[dict[str, Any]]:
+        """Return inventory action logbook entries."""
+        return self.data.setdefault("logbook", [])
 
     def mock_api_payload(self) -> dict[str, Any]:
         """Return the current mock API payload."""
@@ -125,6 +130,11 @@ class RestockInventory:
 
         self.locations[key] = {"name": name, "created_at": _utc_now()}
         _LOGGER.info("Created RESTOCK location: name=%s", name)
+        self._add_log_entry(
+            "Location created",
+            f"{name} was added as an inventory location.",
+            {"location": name},
+        )
         async_dispatcher_send(self.hass, SIGNAL_RESTOCK_ENTITY_ADDED, "location", key)
         if save:
             self.hass.async_create_task(self.async_save())
@@ -175,6 +185,20 @@ class RestockInventory:
             async_dispatcher_send(
                 self.hass, SIGNAL_RESTOCK_ENTITY_ADDED, "container", tag_id
             )
+        container = self.containers[tag_id]
+        self._add_log_entry(
+            "Container created" if is_new else "Container replaced",
+            (
+                f"{container.get('name')} now has {container.get('quantity')} "
+                f"{container.get('unit')} in {container.get('location') or 'no location'}."
+            ),
+            {
+                "tag_id": tag_id,
+                "quantity": container.get("quantity"),
+                "location": container.get("location"),
+                "state": container.get("state"),
+            },
+        )
         _LOGGER.info(
             "%s RESTOCK container: tag_id=%s name=%s quantity=%s location=%s state=%s",
             "Created" if is_new else "Replaced",
@@ -241,6 +265,22 @@ class RestockInventory:
         if item_format is not None:
             container["item_format"] = item_format
         container["updated_at"] = _utc_now()
+        self._add_log_entry(
+            "Container updated",
+            (
+                f"{container.get('name')} changed from {before.get('quantity')} "
+                f"to {container.get('quantity')} {container.get('unit')}."
+            ),
+            {
+                "tag_id": tag_id,
+                "old_quantity": before.get("quantity"),
+                "quantity": container.get("quantity"),
+                "old_location": before.get("location"),
+                "location": container.get("location"),
+                "old_state": before.get("state"),
+                "state": container.get("state"),
+            },
+        )
         _LOGGER.info(
             "Updated RESTOCK container: tag_id=%s quantity=%s->%s location=%s->%s state=%s->%s",
             tag_id,
@@ -279,6 +319,11 @@ class RestockInventory:
             mode,
             set_quantity,
             delta,
+        )
+        self._add_log_entry(
+            "Scan applied",
+            f"Scan action {mode} was applied to tag {tag_id}.",
+            {"tag_id": tag_id, "quantity": quantity, "mode": mode},
         )
         await self.async_update_container(
             tag_id=tag_id,
@@ -328,3 +373,21 @@ class RestockInventory:
             return None
         value = str(value).strip()
         return value or None
+
+    def _add_log_entry(
+        self,
+        action: str,
+        message: str,
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        """Append a bounded logbook entry."""
+        self.logbook.append(
+            {
+                "created_at": _utc_now(),
+                "action": action,
+                "message": message,
+                "details": details or {},
+            }
+        )
+        if len(self.logbook) > 200:
+            del self.logbook[:-200]

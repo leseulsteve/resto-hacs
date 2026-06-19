@@ -48,6 +48,7 @@ api:
             id(inventory_qty) = 0;
             id(current_view) = 10;
             ESP_LOGI("restock", "Create flow loaded: tag=%s items=%d locations=%d", tag_id.c_str(), (int) incoming_item_labels.size(), (int) incoming_locations.size());
+        - script.stop: scan_timeout
         - script.execute: sync_selection
         - script.execute: show_page
 
@@ -80,6 +81,7 @@ api:
             id(inventory_qty) = quantity;
             id(current_view) = 20;
             ESP_LOGI("restock", "Known flow loaded: tag=%s item=%s quantity=%d location=%s choices=%d", tag_id.c_str(), item_label.c_str(), quantity, location.c_str(), (int) incoming_locations.size());
+        - script.stop: scan_timeout
         - script.execute: show_page
 
 ota:
@@ -341,7 +343,26 @@ script:
             lambda: 'return id(current_view) == 30;'
           then:
             - lvgl.page.show: page_done
+
+      - if:
+          condition:
+            lambda: 'return id(current_view) == 31;'
+          then:
+            - lvgl.page.show: page_error
       - script.execute: refresh_ui
+
+  - id: scan_timeout
+    mode: restart
+    then:
+      - delay: 12s
+      - if:
+          condition:
+            lambda: 'return id(current_view) == 1;'
+          then:
+            - lambda: |-
+                ESP_LOGW("restock", "Scan timed out waiting for Home Assistant response: tag=%s", id(last_tag_id).c_str());
+                id(current_view) = 31;
+            - script.execute: show_page
 
   - id: encoder_up
     then:
@@ -444,7 +465,7 @@ script:
 
       - if:
           condition:
-            lambda: 'return id(press_view) == 30;'
+            lambda: 'return id(press_view) == 30 || id(press_view) == 31;'
           then:
             - lambda: 'id(current_view) = 0;'
             - script.execute: show_page
@@ -468,6 +489,7 @@ script:
           event: esphome.restock_scan
           data:
             tag_id: !lambda 'return id(last_tag_id);'
+      - script.execute: scan_timeout
 
   - id: sync_selection
     then:
@@ -729,5 +751,24 @@ lvgl:
         - label:
             align: CENTER
             y: 28
+            text: "Press to scan"
+            text_color: 0x8E8E93
+
+    - id: page_error
+      bg_color: 0x0B0B0F
+      widgets:
+        - label:
+            align: CENTER
+            y: -30
+            text: "HA timeout"
+            text_color: 0xFF3B30
+        - label:
+            align: CENTER
+            y: 6
+            text: "Check RESTOCK logs"
+            text_color: 0xFFFFFF
+        - label:
+            align: CENTER
+            y: 42
             text: "Press to scan"
             text_color: 0x8E8E93

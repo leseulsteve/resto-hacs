@@ -309,8 +309,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 "esphome",
                 service,
                 data,
-                blocking=False,
+                blocking=True,
             )
+            _LOGGER.info("Called ESPHome action esphome.%s successfully", service)
         except HomeAssistantError as err:
             _LOGGER.warning("Could not call ESPHome action esphome.%s: %s", service, err)
 
